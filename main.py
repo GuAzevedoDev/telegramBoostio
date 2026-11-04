@@ -4,6 +4,7 @@ from pyrogram import Client
 
 from services.confere_texto_service import ConfereTextoService
 from services.troca_afiliado_service import TrocaAfiliadoService
+from services.enviar_mensagem_service import EnviarMensagemService
 
 load_dotenv()
 
@@ -21,4 +22,5 @@ with Client('teste', api_id=api_id, api_hash=api_hash) as app:
 
     if ConfereTextoService().executar()(mensagem):
       mensagem = TrocaAfiliadoService().executar(mensagem)
-      print(mensagem)
+      EnviarMensagemService().executar(mensagem)
+      
