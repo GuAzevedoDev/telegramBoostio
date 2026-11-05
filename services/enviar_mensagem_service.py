@@ -1,3 +1,4 @@
 class EnviarMensagemService:
-  def executar(mensagem:str):
+  def executar(app,mensagem:str):
+    app.send_message("Ofertas - BOOSTio", mensagem)
     print(mensagem)
