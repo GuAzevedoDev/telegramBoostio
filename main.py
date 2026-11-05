@@ -17,7 +17,7 @@ from services.confere_duplicada_service import ConfereDuplicadaService
 
 load_dotenv()
 
-# Converte com segurança prevenindo erros se a variável sumir
+
 api_id = int(os.getenv("api_id") or 0)
 api_hash = os.getenv("api_hash")  
 
@@ -31,23 +31,12 @@ app = Client("boostio_user", api_id=api_id, api_hash=api_hash)
 
 confere_duplicada = ConfereDuplicadaService()
 
-@app.on_message(filters.chat(grupos))
+@app.on_message(filters.channel)
 def nova_promocao(client, message):
-
-    mensagem = message.text or message.caption
-
-    if not mensagem:
-        return
-
-    if not ConfereTextoService().executar(mensagem):
-        return
-
-    if confere_duplicada.executar(mensagem):
-        print("Promoção duplicada!")
-        return
-
-    mensagem = TrocaAfiliadoService().executar(mensagem)
-
-    EnviarMensagemService().executar(mensagem)
+    print("PUBLICAÇÃO RECEBIDA!", flush=True)
+    print("Canal:", message.chat.title, flush=True)
+    print("ID:", message.chat.id, flush=True)
+    print("Mensagem:", message.text or message.caption, flush=True)
+    print("-" * 40, flush=True)
 
 app.run()
