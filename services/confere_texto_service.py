@@ -55,13 +55,13 @@ class ConfereTextoService:
   def executar(self, mensagem: str) -> bool:
     mensagem = self.normalizar(mensagem)
 
-    # return any(
-    #         re.search(
-    #             rf"(?<!\w){re.escape(self.normalizar(palavra))}(?!\w)",
-    #             mensagem
-    #         )
-    #         for palavra in self.PALAVRAS_CHAVES
-    #     )
+    return any(
+            re.search(
+                rf"(?<!\w){re.escape(self.normalizar(palavra))}(?!\w)",
+                mensagem
+            )
+            for palavra in self.PALAVRAS_CHAVES
+        )
     return True
 
   @staticmethod
