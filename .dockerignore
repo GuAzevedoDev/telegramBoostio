@@ -1,0 +1,10 @@
+venv/
+.git/
+state/
+data/
+tests/
+assets/
+.env
+*.session
+*.session-journal
+__pycache__/

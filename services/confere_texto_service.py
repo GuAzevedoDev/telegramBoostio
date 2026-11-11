@@ -1,9 +1,11 @@
-import unicodedata
 import re
+
+from services.texto_util import sem_acentos
+
 
 class ConfereTextoService:
 
-  PALAVRAS_CHAVES = [
+    PALAVRAS_CHAVES = [
         # Processadores
         "processador", "ryzen", "intel core",
         "core i3", "core i5", "core i7", "core i9",
@@ -51,26 +53,13 @@ class ConfereTextoService:
         "pc gamer", "computador gamer",
         "mini pc", "notebook gamer"
     ]
- 
-  def executar(self, mensagem: str) -> bool:
-    mensagem = self.normalizar(mensagem)
 
-    return any(
-            re.search(
-                rf"(?<!\w){re.escape(self.normalizar(palavra))}(?!\w)",
-                mensagem
-            )
-            for palavra in self.PALAVRAS_CHAVES
-        )
-    return True
+    # Um único regex compilado uma vez (antes eram ~80 regex por mensagem).
+    _REGEX = re.compile(
+        r"(?<!\w)(?:"
+        + "|".join(re.escape(sem_acentos(p.lower())) for p in PALAVRAS_CHAVES)
+        + r")(?!\w)"
+    )
 
-  @staticmethod
-  def normalizar(texto: str) -> str:
-    texto = texto.lower()
-  
-    return "".join(
-              caractere
-              for caractere in unicodedata.normalize("NFD", texto)
-              if unicodedata.category(caractere) != "Mn"
-          )
-  
+    def executar(self, mensagem: str) -> bool:
+        return self._REGEX.search(sem_acentos(mensagem.lower())) is not None

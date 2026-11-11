@@ -11,6 +11,7 @@ from telethon import TelegramClient, events
 from services.confere_texto_service import ConfereTextoService
 from services.confere_duplicada_service import ConfereDuplicadaService
 from services.troca_afiliado_service import TrocaAfiliadoService
+from services.formata_mensagem_service import FormataMensagemService
 from services.enviar_mensagem_service import EnviarMensagemService
 
 
@@ -24,18 +25,13 @@ API_ID = int(os.getenv("api_id"))
 API_HASH = os.getenv("api_hash")
 
 CANAIS = [
-    -1001371796882,
-    -1001686905299,
+    -1001768101197,
     -1001703989430
 ]
 
 MAX_PROCESSAMENTOS = 4
 INTERVALO_SINCRONIZACAO = 15
 
-
-# ==========================================
-# LOGS
-# ==========================================
 
 logging.basicConfig(
     level=logging.INFO,
@@ -66,6 +62,7 @@ client = TelegramClient(
 confere_texto = ConfereTextoService()
 confere_duplicada = ConfereDuplicadaService()
 troca_afiliado = TrocaAfiliadoService()
+formata_mensagem = FormataMensagemService()
 enviar_mensagem = EnviarMensagemService()
 
 
@@ -73,8 +70,60 @@ enviar_mensagem = EnviarMensagemService()
 # CONCORRÊNCIA
 # ==========================================
 
+# Limita apenas os envios simultâneos; filtro e duplicata são
+# instantâneos e nunca esperam uma promoção lenta.
 semaforo = asyncio.Semaphore(MAX_PROCESSAMENTOS)
-lock_duplicadas = asyncio.Lock()
+
+
+# ==========================================
+# PROCESSAMENTO DE UMA PROMOÇÃO
+# ==========================================
+
+async def processar_promocao(client, mensagem, origem=None):
+    """Retorna True se a promoção foi publicada e confirmada pelo Telegram."""
+
+    # 1. Filtro de hardware (CPU puro: chamada direta, sem thread)
+    if not confere_texto.executar(mensagem):
+        return False
+
+    # 2. Duplicata: atômica (sem await), compara com a última publicada
+    #    e com as promoções em envio no momento.
+    reserva = confere_duplicada.reservar(mensagem)
+
+    if reserva is None:
+        logger.info("Promoção duplicada ignorada")
+        return False
+
+    publicada = False
+
+    try:
+        # 3. Troca de afiliados (mantida em thread: pode fazer I/O)
+        mensagem = await asyncio.to_thread(
+            troca_afiliado.executar,
+            mensagem
+        )
+
+        # 4. Padrão visual BOOSTio
+        mensagem = formata_mensagem.executar(mensagem)
+
+        # 5. Envio
+        async with semaforo:
+            await enviar_mensagem.executar(
+                client,
+                mensagem,
+                origem=origem
+            )
+
+        publicada = True
+
+    finally:
+        if publicada:
+            # só após a confirmação do Telegram
+            await confere_duplicada.confirmar(reserva)
+        else:
+            confere_duplicada.liberar(reserva)
+
+    return True
 
 
 # ==========================================
@@ -102,90 +151,21 @@ async def nova_promocao(event):
     if not mensagem:
         return
 
-    async with semaforo:
-
-        try:
-            # 1. Verificação de hardware
-            t = perf_counter()
-
-            eh_hardware = await asyncio.to_thread(
-                confere_texto.executar,
-                mensagem
-            )
-
+    try:
+        if await processar_promocao(client, mensagem, event.message):
             logger.info(
-                "Filtro hardware: %.3fs",
-                perf_counter() - t
-            )
-
-            if not eh_hardware:
-                return
-
-            # 2. Verificação de duplicação
-            t = perf_counter()
-
-            async with lock_duplicadas:
-                duplicada = await asyncio.to_thread(
-                    confere_duplicada.executar,
-                    mensagem
-                )
-
-            logger.info(
-                "Verificação duplicação: %.3fs",
-                perf_counter() - t
-            )
-
-            if duplicada:
-                logger.info("Promoção duplicada ignorada")
-                return
-
-            # 3. Troca dos links de afiliado
-            t = perf_counter()
-
-            mensagem = await asyncio.to_thread(
-                troca_afiliado.executar,
-                mensagem
-            )
-
-            logger.info(
-                "Troca afiliado: %.3fs",
-                perf_counter() - t
-            )
-
-            if not mensagem:
-                return
-
-            # 4. Envio para o BOOSTio
-            t = perf_counter()
-
-            logger.info(
-                "Iniciando envio | Canal origem: %s | ID: %s",
+                "PUBLICADA | Canal: %s | ID: %s | Total: %.3fs",
                 event.chat_id,
-                event.id
-            )
-
-            await enviar_mensagem.executar(
-                client,
-                mensagem,
-                origem=event.message
-            )
-
-            logger.info(
-                "Envio Telegram: %.3fs",
-                perf_counter() - t
-            )
-
-            logger.info(
-                "TOTAL processamento: %.3fs",
+                event.id,
                 perf_counter() - inicio
             )
 
-        except Exception:
-            logger.exception(
-                "Erro ao processar promoção | Canal: %s | ID: %s",
-                event.chat_id,
-                event.id
-            )
+    except Exception:
+        logger.exception(
+            "Erro ao processar promoção | Canal: %s | ID: %s",
+            event.chat_id,
+            event.id
+        )
 
 
 # ==========================================
@@ -225,6 +205,8 @@ async def main():
     await client.start()
 
     usuario = await client.get_me()
+
+    await asyncio.to_thread(troca_afiliado.aquecer)
 
     logger.info("BOOSTio iniciado")
     logger.info(

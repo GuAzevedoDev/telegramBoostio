@@ -1,0 +1,19 @@
+services:
+  boostio:
+    build: .
+    container_name: boostio
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 15s
+    environment:
+      TZ: America/Sao_Paulo
+    volumes:
+      - ./.env:/app/.env:ro      # api_id, api_hash, SHOPEE_*, ML_*
+      - ./state:/state           # *.session e data/ultima_enviada.json
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    # Sem ports/labels/networks: o bot só faz conexões de saída
+    # (não precisa do Traefik).
