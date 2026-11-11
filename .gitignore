@@ -2,3 +2,5 @@ data/
 state/
 __pycache__/
 .env
+*.session
+*.session-journal
