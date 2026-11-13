@@ -11,37 +11,44 @@ class FormataMensagemService:
     Saída em HTML (parse_mode="html") com todo o conteúdo escapado.
     """
 
-    CABECALHO = "🔥 <b>OFERTA BOOSTio</b>"
-    EMOJI_PADRAO = "🖥️"
+    # Paleta BOOSTio (logo): predominância do azul. Só emojis azuis ou brancos.
+    CABECALHO = "🔷 <b>OFERTA BOOSTio</b>"
+    DIVISOR = "▬▬▬▬▬▬▬▬▬▬▬▬"
+    E_CATEGORIA = "🔹"
+    E_PRECO = "🟦"
+    E_PRECO_ANTIGO = "⚪"
+    E_DESCONTO = "🔵"
+    E_CUPOM = "🔹"
+    E_COMPRAR = "🔷"
     MAX_TITULO = 200
 
-    # Ordem importa: o primeiro grupo que casar define o emoji.
+    # Ordem importa: o primeiro grupo que casar define o rótulo da categoria.
     CATEGORIAS = [
-        ("🖥️", ["placa mae", "motherboard", "b450", "b550", "b650", "b850",
-                "x570", "x670", "x870", "a520", "a620"]),
-        ("🎮", ["placa de video", "gpu", "geforce", "rtx", "gtx", "radeon",
-                "rx 6600", "rx 7600", "rx 9060", "rx 9070"]),
-        ("🧠", ["processador", "ryzen", "intel core", "core i3", "core i5",
-                "core i7", "core i9", "core ultra", "threadripper"]),
-        ("🧩", ["memoria ram", "ddr4", "ddr5", "fury beast", "vengeance"]),
-        ("💾", ["ssd", "nvme", "hd interno", "hdd", "m.2", "sata"]),
-        ("🔌", ["fonte atx", "fonte gamer", "fonte modular", "fonte", "80 plus"]),
-        ("🗄️", ["gabinete", "mid tower", "full tower"]),
-        ("❄️", ["water cooler", "air cooler", "cpu cooler", "cooler",
-                "pasta termica", "ventoinha"]),
-        ("📺", ["monitor", "ultragear", "odyssey"]),
-        ("🖱️", ["mousepad", "mouse"]),
-        ("⌨️", ["teclado"]),
-        ("🎧", ["headset"]),
-        ("📷", ["webcam"]),
-        ("🎙️", ["microfone"]),
-        ("💻", ["pc gamer", "computador gamer", "mini pc", "notebook gamer"]),
+        ("PLACA-MÃE", ["placa mae", "motherboard", "b450", "b550", "b650", "b850",
+                       "x570", "x670", "x870", "a520", "a620"]),
+        ("PLACA DE VÍDEO", ["placa de video", "gpu", "geforce", "rtx", "gtx", "radeon",
+                            "rx 6600", "rx 7600", "rx 9060", "rx 9070"]),
+        ("PROCESSADOR", ["processador", "ryzen", "intel core", "core i3", "core i5",
+                         "core i7", "core i9", "core ultra", "threadripper"]),
+        ("MEMÓRIA RAM", ["memoria ram", "ddr4", "ddr5", "fury beast", "vengeance"]),
+        ("ARMAZENAMENTO", ["ssd", "nvme", "hd interno", "hdd", "m.2", "sata"]),
+        ("FONTE", ["fonte atx", "fonte gamer", "fonte modular", "fonte", "80 plus"]),
+        ("GABINETE", ["gabinete", "mid tower", "full tower"]),
+        ("REFRIGERAÇÃO", ["water cooler", "air cooler", "cpu cooler", "cooler",
+                          "pasta termica", "ventoinha"]),
+        ("MONITOR", ["monitor", "ultragear", "odyssey"]),
+        ("MOUSE", ["mousepad", "mouse"]),
+        ("TECLADO", ["teclado"]),
+        ("HEADSET", ["headset"]),
+        ("WEBCAM", ["webcam"]),
+        ("MICROFONE", ["microfone"]),
+        ("PC", ["pc gamer", "computador gamer", "mini pc", "notebook gamer"]),
     ]
 
     _CATEGORIAS = [
-        (emoji, re.compile(
+        (rotulo, re.compile(
             r"(?<!\w)(?:" + "|".join(re.escape(p) for p in palavras) + r")(?!\w)"))
-        for emoji, palavras in CATEGORIAS
+        for rotulo, palavras in CATEGORIAS
     ]
 
     _VALOR = r"R\$\s?\d{1,3}(?:\.\d{3})*(?:,\d{1,2})?|R\$\s?\d+(?:,\d{1,2})?"
@@ -74,34 +81,41 @@ class FormataMensagemService:
         codigo = self._extrair_codigo(sem_links)
         titulo = self._extrair_titulo(linhas)
 
-        partes = [self.CABECALHO, ""]
+        # "Cupom: CODIGO <link>": com código explícito, o link é o do produto
+        if codigo and not links_compra:
+            links_compra, links_cupom = links_cupom, []
 
+        partes = [self.CABECALHO, self.DIVISOR, ""]
+
+        categoria = self._categoria(titulo, sem_links) if titulo else None
+        if categoria:
+            partes.append(f"{self.E_CATEGORIA} <b>{categoria}</b>")
         if titulo:
-            partes.append(f"{self._emoji(titulo, sem_links)} <b>{escape(titulo)}</b>")
+            partes.append(f"<b>{escape(titulo)}</b>")
 
         if preco:
-            linha = ""
+            partes.append("")
             if preco_antigo:
-                linha = f"<s>{escape(preco_antigo)}</s> ➜ "
-            linha += f"💰 <b>{escape(preco)}</b>"
+                partes.append(f"{self.E_PRECO_ANTIGO} De <s>{escape(preco_antigo)}</s>")
+            linha = f"{self.E_PRECO} {'Por ' if preco_antigo else ''}<b>{escape(preco)}</b>"
             if no_pix:
                 linha += " no Pix"
             partes.append(linha)
 
         if desconto:
-            partes.append(f"📉 <b>{escape(desconto)} OFF</b>")
+            partes.append(f"{self.E_DESCONTO} <b>{escape(desconto)} OFF</b>")
 
         if codigo or links_cupom:
             partes.append("")
             if codigo:
-                partes.append(f"🎟️ Cupom: <code>{escape(codigo)}</code>")
+                partes.append(f"{self.E_CUPOM} Cupom: <code>{escape(codigo)}</code>")
             if links_cupom:
-                partes.append("🎟️ Cupons disponíveis:")
+                partes.append(f"{self.E_CUPOM} Cupons disponíveis:")
                 partes.extend(escape(l) for l in links_cupom)
 
         if links_compra:
             partes.append("")
-            partes.append("🛒 Comprar:")
+            partes.append(f"{self.E_COMPRAR} <b>Comprar:</b>")
             partes.extend(escape(l) for l in links_compra)
 
         return "\n".join(partes).strip()
@@ -183,9 +197,9 @@ class FormataMensagemService:
                 return titulo[: self.MAX_TITULO]
         return None
 
-    def _emoji(self, titulo: str, texto: str) -> str:
+    def _categoria(self, titulo: str, texto: str):
         for alvo in (sem_acentos(titulo).lower(), sem_acentos(texto).lower()):
-            for emoji, regex in self._CATEGORIAS:
+            for rotulo, regex in self._CATEGORIAS:
                 if regex.search(alvo):
-                    return emoji
-        return self.EMOJI_PADRAO
+                    return rotulo
+        return None

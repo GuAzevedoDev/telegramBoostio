@@ -126,7 +126,7 @@ class Fluxo(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(tipo, "texto")
         print("\n" + texto)
         self.assertNotIn("🔥💥", texto)
-        self.assertIn("🛒 Comprar:\nhttps://afiliado.loja.com/ref123/produto?a=1&amp;b=2", texto)
+        self.assertIn("🔷 <b>Comprar:</b>\nhttps://afiliado.loja.com/ref123/produto?a=1&amp;b=2", texto)
         self.assertNotIn("https://loja.com", texto)
         self.assertIn("R$ 332,00", texto)
 
@@ -186,15 +186,38 @@ class Formatacao(unittest.TestCase):
         s = self.f.executar("Mouse Logitech G203 https://x.com/1")
         self.assertNotIn("R$", s)
         self.assertNotIn("Cupom", s)
-        self.assertIn("🖱️", s)
+        self.assertIn("<b>MOUSE</b>", s)
 
     def test_de_por_cupom_desconto(self):
         s = self.f.executar("🔥 RTX 4060 de R$ 2.200,00 por R$ 1.899,00 15% OFF\nCupom: BOOST10\nhttps://l.com/g")
         print("\n" + s)
-        self.assertIn("🎮", s)
+        self.assertIn("<b>PLACA DE VÍDEO</b>", s)
         self.assertIn("<code>BOOST10</code>", s)
         self.assertIn("15% OFF", s)
-        self.assertIn("<s>R$ 2.200,00</s>", s)
+        self.assertIn("De <s>R$ 2.200,00</s>", s)
+
+    def test_codigo_de_cupom_com_um_link_e_compra(self):
+        for msg in ("Processador AMD Ryzen 7 9800X3D - R$ 1912 -Cupom: 11DO11X3D https://tidd.ly/4z6o2xd",
+                    "Processador AMD Ryzen 7 9800X3D R$ 1912\nCupom: 11DO11X3D\nhttps://tidd.ly/4z6o2xd"):
+            s = self.f.executar(msg)
+            self.assertIn("<b>Comprar:</b>\nhttps://tidd.ly/4z6o2xd", s)
+            self.assertNotIn("Cupons disponíveis", s)
+            self.assertIn("<code>11DO11X3D</code>", s)
+
+    def test_so_emojis_da_paleta(self):
+        from services.texto_util import remover_emojis
+        permitidos = set("🔷🔹🟦🔵⚪")
+        amostras = [
+            "🧠💥 Processador AMD Ryzen 5 5500 de R$ 900 por R$ 699 15% OFF Cupom: BOOST10 https://a.com/x",
+            "Mouse Logitech G203 R$ 99 https://b.com/y",
+            "RTX 4060 Gigabyte por R$ 1.899 no pix\nCupons: https://c.com/cupons\nhttps://c.com/p",
+            "Monitor LG 27 R$ 899",
+        ]
+        for a in amostras:
+            saida = self.f.executar(a)
+            usados = {c for c in saida if remover_emojis(c) == "" and c not in "\u200d\ufe0f"
+                      and c not in "▬"}
+            self.assertLessEqual(usados, permitidos, saida)
 
     def test_html_escapado(self):
         self.assertIn("&lt;b&gt;", self.f.executar("SSD <b>x</b> 1TB"))
@@ -278,6 +301,37 @@ class Afiliado(unittest.TestCase):
         s._sessao_ml.get = lambda *a, **k: mock.Mock(url="https://www.mercadolivre.com.br/login", text="")
         out = s.executar("https://www.mercadolivre.com.br/ryzen/p/MLB19444510")
         self.assertIn("matt_word=minhaetiqueta", out)
+
+    LISTA_HTML = "".join(
+        f'<a href="https://www.mercadolivre.com.br/{slug}/p/{pid}?x=1">' for slug, pid in [
+            ("notebook-acer-aspire-go-15-ag15-51p-59sm-intel-core-i5-120u-8gb-ram-256gb-ssd-linux", "MLB78838496"),
+            ("celular-samsung-galaxy-s25-ultra-5g-256gb-12gb-cam-quad-cor-prata", "MLB45524778"),
+            ("celular-samsung-galaxy-s26-fe-128gb-8gb-ram-tela-67-grafite", "MLB78949324"),
+            ("carregador-portatil-power-bank-basike-20000mah-225w-rapido", "MLB52327865"),
+        ]).encode()
+
+    def _resolver_lista(self, mensagem):
+        from unittest import mock
+        s = self._com_gerador_oficial()
+        resp = mock.MagicMock()
+        resp.__enter__.return_value.iter_content.return_value = [self.LISTA_HTML]
+        s._sessao.get = lambda *a, **k: resp
+        s._ml_oficial = lambda url: "OFICIAL<" + url.rsplit("/", 1)[-1] + ">"
+        return s.executar(mensagem)
+
+    def test_lista_casa_produto_pelo_titulo(self):
+        out = self._resolver_lista(
+            "Notebook Acer Aspire Go 15 Intel Core i5 8GB 256GB SSD por R$ 2.199 https://meli.la/lista")
+        self.assertIn("OFICIAL<MLB78838496>", out)
+
+    def test_lista_sem_casamento_mantem_original(self):
+        msg = "SSD Kingston NV2 1TB NVMe por R$ 349 https://meli.la/lista"
+        self.assertEqual(self._resolver_lista(msg), msg)
+
+    def test_lista_ambigua_mantem_original(self):
+        msg = "Celular Samsung Galaxy em oferta https://meli.la/lista"
+        out = self._resolver_lista(msg)
+        self.assertEqual(out, msg)
 
     def test_ml_social_sem_produto_mantem(self):
         from unittest import mock

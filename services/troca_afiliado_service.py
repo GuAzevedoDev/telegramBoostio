@@ -10,7 +10,7 @@ from urllib.parse import parse_qs, quote, urlsplit
 
 import requests
 
-from services.texto_util import URL_RE
+from services.texto_util import URL_RE, remover_emojis, sem_acentos
 
 logger = logging.getLogger("BOOSTio.afiliado")
 
@@ -45,6 +45,15 @@ class TrocaAfiliadoService:
         re.compile(r'<meta[^>]+name="csrf-token"[^>]+content="([^"]+)"'),
         re.compile(r'<meta[^>]+content="([^"]+)"[^>]+name="csrf-token"'),
     )
+    # página /social/<afiliado>/lists: todos os produtos recomendados, com o nome no endereço
+    _ML_LISTA_RE = re.compile(r'href="https://www\.mercadolivre\.com\.br/([a-z0-9-]+)/p/(MLB\d+)')
+    _STOP = frozenset(
+        "de da do das dos com para por em no na e a o as os um uma ate r rs reais "
+        "cupom cupons frete gratis oferta promocao pix vista parcelas sem juros off "
+        "desconto link comprar compre aqui".split())
+    ML_LISTA_SCORE_MIN = 0.40      # similaridade mínima (cosseno de palavras)
+    ML_LISTA_MARGEM = 0.12         # vantagem mínima sobre o 2º colocado
+    ML_PAGINA_MAX = 1_500_000
     ML_MATT_TOOL_PADRAO = "74191004"
     ML_PARAMS_MANTIDOS = ("pdp_filters",)  # escolhe a oferta no catálogo (/p/)
 
@@ -70,6 +79,7 @@ class TrocaAfiliadoService:
         self._csrf_ts = 0.0
         self._lock_csrf = threading.Lock()
         self._cache: dict[str, str] = {}
+        self._cache_ml: dict[str, str] = {}   # produto -> link oficial gerado
         self._pool = ThreadPoolExecutor(max_workers=4)
 
     # ---------- API ----------
@@ -92,9 +102,9 @@ class TrocaAfiliadoService:
         urls = list(dict.fromkeys(l.rstrip(".,;)") for l in URL_RE.findall(mensagem)))
 
         if len(urls) > 1:  # links independentes: trocas em paralelo
-            novos = list(self._pool.map(self._trocar, urls))
+            novos = list(self._pool.map(lambda u: self._trocar(u, mensagem), urls))
         else:
-            novos = [self._trocar(u) for u in urls]
+            novos = [self._trocar(u, mensagem) for u in urls]
 
         for url, novo in zip(urls, novos):
             if novo != url:
@@ -103,7 +113,7 @@ class TrocaAfiliadoService:
 
     # ---------- roteamento ----------
 
-    def _trocar(self, url: str) -> str:
+    def _trocar(self, url: str, contexto: str = "") -> str:
         if url in self._cache:
             return self._cache[url]
 
@@ -112,7 +122,7 @@ class TrocaAfiliadoService:
             if self._eh(host, self.SHOPEE_HOSTS + self.SHOPEE_CURTOS):
                 novo = self._shopee(url, host)
             elif self._eh(host, self.ML_HOSTS + self.ML_CURTOS):
-                novo = self._mercado_livre(url)
+                novo = self._mercado_livre(url, contexto)
             else:
                 novo = url
         except Exception:
@@ -121,9 +131,10 @@ class TrocaAfiliadoService:
 
         if len(self._cache) >= self.CACHE_MAX:
             self._cache.pop(next(iter(self._cache)))
-        # o link de contingência da ML não fica em cache: na próxima
-        # ocorrência tentamos o gerador oficial de novo
-        if not (self._sessao_ml and "matt_word=" in novo):
+        # não ficam em cache: o link de contingência da ML (tenta o oficial de
+        # novo na próxima) e links curtos da ML, que dependem do texto da mensagem
+        contextual = self._eh(host, self.ML_CURTOS) or "/social/" in url
+        if not (contextual or (self._sessao_ml and "matt_word=" in novo)):
             self._cache[url] = novo
         return novo
 
@@ -133,7 +144,7 @@ class TrocaAfiliadoService:
 
     # ---------- Mercado Livre ----------
 
-    def _mercado_livre(self, url: str) -> str:
+    def _mercado_livre(self, url: str, contexto: str = "") -> str:
         if not self._ml_etiqueta:
             logger.warning("ML_ETIQUETA ausente; link mantido")
             return url
@@ -144,7 +155,7 @@ class TrocaAfiliadoService:
 
         if eh_curto:
             # link de afiliado de terceiros: descobre o produto pela página
-            produto = self._produto_do_link_social(url)
+            produto = self._produto_do_link_social(url, contexto)
             if not produto:
                 logger.warning("Produto não identificado em %s", url)
                 return url
@@ -162,8 +173,14 @@ class TrocaAfiliadoService:
         if self._sessao_ml:
             url = base + ("?" + "&".join(
                 f"{k}={quote(v, safe='')}" for k, v in extras.items()) if extras else "")
+            if url in self._cache_ml:
+                return self._cache_ml[url]
             try:
-                return self._ml_oficial(url)
+                link = self._ml_oficial(url)
+                if len(self._cache_ml) >= self.CACHE_MAX:
+                    self._cache_ml.pop(next(iter(self._cache_ml)))
+                self._cache_ml[url] = link
+                return link
             except Exception as erro:
                 logger.error(
                     "Gerador oficial da ML falhou (%s); usando link parametrizado", erro)
@@ -225,26 +242,55 @@ class TrocaAfiliadoService:
         params += [f"matt_word={self._ml_etiqueta}", f"matt_tool={self._ml_tool}"]
         return f"{base}?{'&'.join(params)}"
 
-    def _produto_do_link_social(self, url: str) -> str | None:
-        """Caminho do produto (/p/MLB... ou /MLB-...) citado na página social."""
+    def _produto_do_link_social(self, url: str, contexto: str = "") -> str | None:
+        """Caminho do produto (/p/MLB...) que o link social divulga."""
         buffer = ""
         with self._sessao.get(url, stream=True, timeout=self.TIMEOUT) as resp:
-            # o bloco de métricas está no início do HTML: lê só até achá-lo
+            # produto único: o bloco de métricas está no início do HTML
             for pedaco in resp.iter_content(32768, decode_unicode=False):
                 buffer += pedaco.decode("utf-8", "ignore")
                 m = self._ML_SOCIAL_RE.search(buffer)
                 if m:
-                    break
-                if len(buffer) > 400_000:
+                    if m["produto"].startswith("MLB"):
+                        return f"/p/{m['produto']}"
+                    if m["item"].startswith("MLB"):
+                        return f"/{m['item'][:3]}-{m['item'][3:]}"
                     return None
-            else:
-                return None
+                if len(buffer) > self.ML_PAGINA_MAX:
+                    break
+        # página de lista (vários produtos): casa o nome da mensagem com a lista
+        return self._produto_por_titulo(buffer, contexto)
 
-        if m["produto"].startswith("MLB"):
-            return f"/p/{m['produto']}"
-        if m["item"].startswith("MLB"):
-            return f"/{m['item'][:3]}-{m['item'][3:]}"
-        return None
+    @classmethod
+    def _tokens(cls, texto: str) -> set[str]:
+        texto = sem_acentos(remover_emojis(URL_RE.sub(" ", texto)).lower())
+        return {t for t in re.findall(r"[a-z0-9]+", texto)
+                if len(t) > 1 and t not in cls._STOP}
+
+    def _produto_por_titulo(self, html: str, contexto: str) -> str | None:
+        """Só devolve um produto se o casamento for claro; senão, None."""
+        msg = self._tokens(contexto)
+        if not msg:
+            return None
+
+        candidatos = {}
+        for slug, pid in self._ML_LISTA_RE.findall(html):
+            candidatos.setdefault(pid, slug)
+
+        pontuados = []
+        for pid, slug in candidatos.items():
+            tokens = self._tokens(slug.replace("-", " "))
+            comuns = msg & tokens
+            if len(comuns) >= 3 and tokens:
+                pontuados.append((len(comuns) / (len(msg) * len(tokens)) ** 0.5, pid))
+
+        pontuados.sort(reverse=True)
+        if not pontuados or pontuados[0][0] < self.ML_LISTA_SCORE_MIN:
+            return None
+        if len(pontuados) > 1 and pontuados[0][0] - pontuados[1][0] < self.ML_LISTA_MARGEM:
+            logger.warning("Casamento ambíguo na lista; link mantido")
+            return None
+        return f"/p/{pontuados[0][1]}"
 
     # ---------- Shopee ----------
 

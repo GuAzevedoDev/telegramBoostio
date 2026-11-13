@@ -30,6 +30,7 @@ CANAIS = [
 ]
 
 MAX_PROCESSAMENTOS = 4
+MAX_TEXTOS_VISTOS = 500
 INTERVALO_SINCRONIZACAO = 15
 
 
@@ -73,6 +74,9 @@ enviar_mensagem = EnviarMensagemService()
 # Limita apenas os envios simultâneos; filtro e duplicata são
 # instantâneos e nunca esperam uma promoção lenta.
 semaforo = asyncio.Semaphore(MAX_PROCESSAMENTOS)
+
+# Última versão vista de cada mensagem de origem (só para registrar edições)
+textos_vistos: dict[tuple, str] = {}
 
 
 # ==========================================
@@ -151,6 +155,10 @@ async def nova_promocao(event):
     if not mensagem:
         return
 
+    textos_vistos[(event.chat_id, event.id)] = mensagem
+    if len(textos_vistos) > MAX_TEXTOS_VISTOS:
+        textos_vistos.pop(next(iter(textos_vistos)))
+
     try:
         if await processar_promocao(client, mensagem, event.message):
             logger.info(
@@ -166,6 +174,44 @@ async def nova_promocao(event):
             event.chat_id,
             event.id
         )
+
+
+# ==========================================
+# EDIÇÕES DAS MENSAGENS DE ORIGEM (apenas registro)
+# ==========================================
+
+@client.on(events.MessageEdited(chats=CANAIS))
+async def promocao_editada(event):
+
+    chave = (event.chat_id, event.id)
+    antes = textos_vistos.get(chave)
+    depois = event.raw_text or ""
+    textos_vistos[chave] = depois
+
+    edit_date = event.message.edit_date
+    apos = (
+        (edit_date - event.message.date).total_seconds()
+        if edit_date else 0
+    )
+
+    if antes is None:
+        logger.info(
+            "EDITADA | Canal: %s | ID: %s | +%.0fs | versão anterior não vista",
+            event.chat_id, event.id, apos
+        )
+        return
+
+    similaridade = confere_duplicada.similaridade(
+        confere_duplicada.normalizar(antes),
+        confere_duplicada.normalizar(depois)
+    )
+
+    logger.info(
+        "EDITADA | Canal: %s | ID: %s | +%.0fs | similaridade: %.0f%% | "
+        "link antes/depois: %s/%s | texto antes/depois: %s/%s chars",
+        event.chat_id, event.id, apos, similaridade * 100,
+        "http" in antes, "http" in depois, len(antes), len(depois)
+    )
 
 
 # ==========================================
