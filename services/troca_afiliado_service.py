@@ -109,6 +109,9 @@ class TrocaAfiliadoService:
         for url, novo in zip(urls, novos):
             if novo != url:
                 mensagem = mensagem.replace(url, novo)
+                logger.info("Afiliado trocado | %s -> %s", url, novo)
+            else:
+                logger.info("Afiliado mantido | %s", url)
         return mensagem
 
     # ---------- roteamento ----------

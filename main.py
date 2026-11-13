@@ -3,6 +3,7 @@ import logging
 import os
 
 from datetime import datetime, timezone
+from difflib import SequenceMatcher
 from time import perf_counter
 
 from dotenv import load_dotenv
@@ -88,6 +89,7 @@ async def processar_promocao(client, mensagem, origem=None):
 
     # 1. Filtro de hardware (CPU puro: chamada direta, sem thread)
     if not confere_texto.executar(mensagem):
+        logger.info("Descartada pelo filtro de hardware")
         return False
 
     # 2. Duplicata: atômica (sem await), compara com a última publicada
@@ -180,6 +182,16 @@ async def nova_promocao(event):
 # EDIÇÕES DAS MENSAGENS DE ORIGEM (apenas registro)
 # ==========================================
 
+def _mudancas(antes: str, depois: str, limite: int = 200) -> str:
+    """Resume só os trechos que mudaram entre duas versões do texto."""
+    a, b = antes.split(), depois.split()
+    partes = []
+    for op, i1, i2, j1, j2 in SequenceMatcher(None, a, b, autojunk=False).get_opcodes():
+        if op != "equal":
+            partes.append(f"'{' '.join(a[i1:i2])}' -> '{' '.join(b[j1:j2])}'")
+    return " | ".join(partes)[:limite]
+
+
 @client.on(events.MessageEdited(chats=CANAIS))
 async def promocao_editada(event):
 
@@ -212,6 +224,9 @@ async def promocao_editada(event):
         event.chat_id, event.id, apos, similaridade * 100,
         "http" in antes, "http" in depois, len(antes), len(depois)
     )
+
+    if antes != depois:
+        logger.info("EDITADA | ID: %s | mudou: %s", event.id, _mudancas(antes, depois))
 
 
 # ==========================================
