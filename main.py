@@ -14,6 +14,7 @@ from services.confere_duplicada_service import ConfereDuplicadaService
 from services.troca_afiliado_service import TrocaAfiliadoService
 from services.formata_mensagem_service import FormataMensagemService
 from services.enviar_mensagem_service import EnviarMensagemService
+from services.marca_dagua_service import MarcaDaguaService
 
 
 load_dotenv()
@@ -66,6 +67,7 @@ confere_duplicada = ConfereDuplicadaService()
 troca_afiliado = TrocaAfiliadoService()
 formata_mensagem = FormataMensagemService()
 enviar_mensagem = EnviarMensagemService()
+marca_dagua = MarcaDaguaService()
 
 
 # ==========================================
@@ -101,28 +103,40 @@ async def processar_promocao(client, mensagem, origem=None):
         return False
 
     publicada = False
+    foto = None
 
     try:
-        # 3. Troca de afiliados (mantida em thread: pode fazer I/O)
+        # 3. Foto com marca d'água, em paralelo com a troca de afiliados
+        #    (vídeos seguem por referência, sem download)
+        if origem is not None and origem.photo:
+            foto = asyncio.create_task(marca_dagua.preparar(client, origem))
+
+        # 4. Troca de afiliados (mantida em thread: pode fazer I/O)
         mensagem = await asyncio.to_thread(
             troca_afiliado.executar,
             mensagem
         )
 
-        # 4. Padrão visual BOOSTio
+        # 5. Padrão visual BOOSTio
         mensagem = formata_mensagem.executar(mensagem)
 
-        # 5. Envio
+        # 6. Envio
+        imagem = await foto if foto else None
+
         async with semaforo:
             await enviar_mensagem.executar(
                 client,
                 mensagem,
-                origem=origem
+                origem=origem,
+                imagem=imagem
             )
 
         publicada = True
 
     finally:
+        if foto and not foto.done():
+            foto.cancel()
+
         if publicada:
             # só após a confirmação do Telegram
             await confere_duplicada.confirmar(reserva)

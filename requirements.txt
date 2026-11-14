@@ -1,3 +1,4 @@
 telethon==1.45.0
 python-dotenv==1.2.4
 requests==2.34.2
+pillow==13.0.0

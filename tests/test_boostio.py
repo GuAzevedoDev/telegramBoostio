@@ -1,4 +1,5 @@
 import asyncio
+import io
 import os
 import sys
 import tempfile
@@ -11,6 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import main as app  # noqa: E402
 from services.confere_duplicada_service import ConfereDuplicadaService  # noqa: E402
 from services.formata_mensagem_service import FormataMensagemService  # noqa: E402
+from services.marca_dagua_service import MarcaDaguaService  # noqa: E402
 
 BASE = (
     "🔥💥 PROMOÇÃO 🔥\n"
@@ -179,6 +181,60 @@ class Fluxo(unittest.IsolatedAsyncioTestCase):
         self.assertIs(r[1], False)  # limitação documentada
 
 
+def foto_de_teste(largura=800, altura=600, cor=(240, 240, 240)):
+    from PIL import Image
+    saida = io.BytesIO()
+    Image.new("RGB", (largura, altura), cor).save(saida, "JPEG")
+    return saida.getvalue()
+
+
+class MarcaDagua(unittest.IsolatedAsyncioTestCase):
+    m = MarcaDaguaService()
+
+    def test_ícone_no_canto_inferior_direito(self):
+        from PIL import Image
+        img = Image.open(io.BytesIO(self.m.aplicar(foto_de_teste()))).convert("RGB")
+        self.assertEqual(img.size, (800, 600))
+        self.assertEqual(img.getpixel((5, 5)), (240, 240, 240))      # canto superior intacto
+        self.assertEqual(img.getpixel((5, 595)), (240, 240, 240))    # canto inferior esquerdo intacto
+        r, g, b = img.getpixel((800 - 40, 600 - 40))                 # dentro do ícone
+        self.assertGreater(b, r + 40)                                # azul da marca
+
+    def test_foto_pequena_e_estreita(self):
+        for dim in ((120, 90), (1600, 300), (90, 1200)):
+            self.assertTrue(self.m.aplicar(foto_de_teste(*dim)))
+
+    async def test_falha_devolve_none(self):
+        class Quebrado:
+            async def download_media(self, *a, **k):
+                return b"isso nao e uma imagem"
+        self.assertIsNone(await self.m.preparar(Quebrado(), object()))
+
+    async def test_fluxo_envia_foto_marcada(self):
+        class ClienteFoto(FakeClient):
+            async def download_media(self, origem, file=None):
+                return foto_de_teste()
+        c = ClienteFoto()
+        origem = SimpleNamespace(photo="FOTO", video=None)
+        tmp = tempfile.mkdtemp()
+        preparar(tmp)
+        await app.processar_promocao(c, BASE, origem)
+        tipo, arquivo, _ = c.enviados[0]
+        self.assertEqual(tipo, "midia")
+        self.assertEqual(arquivo.name, "promocao.jpg")
+        self.assertNotEqual(arquivo.getvalue(), foto_de_teste())
+
+    async def test_video_nao_baixa(self):
+        class ClienteVideo(FakeClient):
+            async def download_media(self, *a, **k):
+                raise AssertionError("vídeo não deve ser baixado")
+        c = ClienteVideo()
+        origem = SimpleNamespace(photo=None, video="VIDEO")
+        preparar(tempfile.mkdtemp())
+        await app.processar_promocao(c, BASE, origem)
+        self.assertEqual(c.enviados[0][0:2], ("midia", "VIDEO"))
+
+
 class Formatacao(unittest.TestCase):
     f = FormataMensagemService()
 
@@ -217,7 +273,7 @@ class Formatacao(unittest.TestCase):
 
     def test_so_emojis_da_paleta(self):
         from services.texto_util import remover_emojis
-        permitidos = set("🔷🔹🟦🔵⚪")
+        permitidos = set("🔷🔹🟦🔵⚪🎟")
         amostras = [
             "🧠💥 Processador AMD Ryzen 5 5500 de R$ 900 por R$ 699 15% OFF Cupom: BOOST10 https://a.com/x",
             "Mouse Logitech G203 R$ 99 https://b.com/y",

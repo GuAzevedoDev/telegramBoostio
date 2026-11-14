@@ -11,7 +11,8 @@ class FormataMensagemService:
     Saída em HTML (parse_mode="html") com todo o conteúdo escapado.
     """
 
-    # Paleta BOOSTio (logo): predominância do azul. Só emojis azuis ou brancos.
+    # Paleta BOOSTio (logo): predominância do azul. Só emojis azuis ou brancos,
+    # exceto o ingresso do código de cupom (não existe cupom azul no Unicode).
     CABECALHO = "🔷 <b>OFERTA BOOSTio</b>"
     DIVISOR = "▬▬▬▬▬▬▬▬▬▬▬▬"
     E_CATEGORIA = "🔹"
@@ -19,6 +20,7 @@ class FormataMensagemService:
     E_PRECO_ANTIGO = "⚪"
     E_DESCONTO = "🔵"
     E_CUPOM = "🔹"
+    E_CODIGO = "🎟️"
     E_COMPRAR = "🔷"
     MAX_TITULO = 200
 
@@ -109,7 +111,7 @@ class FormataMensagemService:
         if codigo or links_cupom:
             partes.append("")
             if codigo:
-                partes.append(f"{self.E_CUPOM} Cupom: <code>{escape(codigo)}</code>")
+                partes.append(f"{self.E_CODIGO} Cupom: <code>{escape(codigo)}</code>")
             if links_cupom:
                 partes.append(f"{self.E_CUPOM} Cupons disponíveis:")
                 partes.extend(escape(l) for l in links_cupom)

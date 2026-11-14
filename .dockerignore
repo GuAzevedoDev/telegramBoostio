@@ -3,7 +3,8 @@ venv/
 state/
 data/
 tests/
-assets/
+assets/*
+!assets/boostio_icone.png
 .env
 *.session
 *.session-journal
