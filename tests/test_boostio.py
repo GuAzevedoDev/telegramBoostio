@@ -196,6 +196,17 @@ class Formatacao(unittest.TestCase):
         self.assertIn("15% OFF", s)
         self.assertIn("De <s>R$ 2.200,00</s>", s)
 
+    def test_preco_nao_e_cortado_em_tres_digitos(self):
+        casos = [
+            ("Ryzen 5 5600 por R$ 1912,00 no Pix", "R$ 1912,00"),
+            ("SSD 1TB por R$ 12345,90", "R$ 12345,90"),
+            ("RTX 4060 de R$ 2400 por R$ 1899", "R$ 1899"),
+            ("SSD por R$ 1.912,50", "R$ 1.912,50"),
+            ("Cabo por R$99", "R$ 99"),
+        ]
+        for msg, esperado in casos:
+            self.assertIn(f"<b>{esperado}</b>", self.f.executar(msg + "\nhttps://x.com/a"), msg)
+
     def test_codigo_de_cupom_com_um_link_e_compra(self):
         for msg in ("Processador AMD Ryzen 7 9800X3D - R$ 1912 -Cupom: 11DO11X3D https://tidd.ly/4z6o2xd",
                     "Processador AMD Ryzen 7 9800X3D R$ 1912\nCupom: 11DO11X3D\nhttps://tidd.ly/4z6o2xd"):

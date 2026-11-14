@@ -51,7 +51,8 @@ class FormataMensagemService:
         for rotulo, palavras in CATEGORIAS
     ]
 
-    _VALOR = r"R\$\s?\d{1,3}(?:\.\d{3})*(?:,\d{1,2})?|R\$\s?\d+(?:,\d{1,2})?"
+    # milhar com ponto (1.912,50) ou sem (1912,50); centavos opcionais
+    _VALOR = r"R\$\s?(?:\d{1,3}(?:\.\d{3})+|\d+)(?:,\d{1,2})?"
     _PRECO_RE = re.compile(_VALOR, re.I)
     _DE_POR_RE = re.compile(
         rf"\bde\s+({_VALOR})\s+(?:por|a|para)\s+({_VALOR})", re.I)
